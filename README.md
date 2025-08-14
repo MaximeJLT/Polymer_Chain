@@ -85,7 +85,7 @@ The simulation proceeds as follows:
 ## Results
 
 ### Figure 1: Polar angle distribution
-![Polar angle distribution](TD7/Fig_2.pdf)  
+![Polar angle distribution](plot/Fig_2.png)  
 
 Distribution of the polar angle $\phi$ obtained with rejection sampling.  
 It matches the expected **theoretical distribution** in the range $[0, 2\pi]$.
@@ -93,7 +93,7 @@ It matches the expected **theoretical distribution** in the range $[0, 2\pi]$.
 ---
 
 ### Figure 2: Azimuthal angle distribution
-![Azimuthal angle distribution](TD7/Fig_3.pdf)  
+![Azimuthal angle distribution](plot/Fig_3.png)  
 
 Distribution of the azimuthal angle $\theta$ obtained with rejection sampling.  
 It matches the expected **theoretical distribution** in the range $[-\pi, \pi]$.
@@ -101,12 +101,11 @@ It matches the expected **theoretical distribution** in the range $[-\pi, \pi]$.
 ---
 
 ### Figure 3: Example conformations (VMD)
-![Conformation 1](TD7/1.pdf)  
-![Conformation 2](TD7/2.pdf)  
-![Conformation 3](TD7/3.pdf)  
-![Conformation 4](TD7/4.pdf)  
-![Conformation 5](TD7/5.pdf)  
-![Conformation 6](TD7/6.pdf)  
+![Conformation 1](plot/1.png)  
+![Conformation 2](plot/2.png)  
+![Conformation 3](plot/3.png)   
+![Conformation 5](plot/5.png)  
+![Conformation 6](plot/6.png)  
 
 Different polymer conformations visualized with **VMD**.  
 The **dark blue** monomer is the first in the chain, and the **dark red** monomer is the last.
@@ -151,7 +150,7 @@ $$
 $$
 
 ### Figure 4: Linear regression of $\langle Q^2 \rangle$ vs $N$
-![Linear regression](TD7/reg.pdf)  
+![Linear regression](plot/reg.png)  
 
 From the slope, we estimate:
 
@@ -174,12 +173,12 @@ This confirms the correctness of the simulation.
 We also analyze the distribution of $Q$ for $N = 100$.
 
 ### Figure 5: Theoretical distribution of $Q$
-![Theoretical Q distribution](TD7/Fig_4.pdf)  
+![Theoretical Q distribution](plot/Fig_4.png)  
 
 The expected shape is **Gaussian**.
 
 ### Figure 6: Computed distribution of $Q$
-![Computed Q distribution](TD7/Fig_1.pdf)  
+![Computed Q distribution](plot/Fig_1.png)  
 
 The simulated distribution matches the Gaussian profile predicted by theory.
 
