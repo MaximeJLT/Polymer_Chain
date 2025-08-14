@@ -39,7 +39,7 @@ $$
 The **end-to-end vector** is then:
 
 $$
-\vec{Q} = \vec{R}_{N + 1} - \vec{R_1} = \sum_{i=1}^N \vec{b_i}
+\vec{Q} = R_{(N+1)} - \vec{R_1} = \sum_{i=1}^N \vec{b_i}
 $$
 
 Because the bond orientations are random, the first moment of $\vec{Q}$ is:
