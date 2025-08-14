@@ -1,150 +1,147 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
-#include <time.h>
 #include <string.h>
+#include <time.h>
 
 typedef struct {
-    int N;          // nombre de segments
-    double b;       // longueur de segment
-    int T;          // nombre de conformations
-    int nb_bins;    // nombre de bins pour l'histogramme
-    unsigned int seed;
+    double b;           // segment length
+    int T;              // number of conformations
+    int Nmin, Nmax;     // sweep range
+    int Nstep;          // step
+    unsigned int seed;  // RNG seed
 } Params;
 
-static void usage(const char *p) {
+static void usage(const char* prog){
     fprintf(stderr,
-        "Usage: %s [-N <int>] [-b <double>] [-T <int>] [-bins <int>] [-s <seed>]\n"
-        "Defaults: N=100, b=3.0, T=1000, bins=50, seed=time\n", p);
+        "Usage: %s [-b <double>] [-T <int>] [-Nmin <int>] [-Nmax <int>] [-Nstep <int>] [-s <seed>]\n"
+        "Defaults: b=3.0, T=1000, Nmin=100, Nmax=1000, Nstep=100, seed=time\n", prog);
 }
 
-static inline double urand(void) {
+static inline double urand01(void){
     // U[0,1)
     return (double)rand() / ((double)RAND_MAX + 1.0);
 }
 
-int main(int argc, char **argv) {
-    Params par = { .N = 100, .b = 3.0, .T = 1000, .nb_bins = 50, .seed = (unsigned)time(NULL) };
+// Least squares linear regression y ~ m x + c, with R^2
+static void linreg(const double *x, const double *y, int n, double *m, double *c, double *R2){
+    double sx=0.0, sy=0.0, sxx=0.0, sxy=0.0;
+    for(int i=0;i<n;++i){
+        sx  += x[i];
+        sy  += y[i];
+        sxx += x[i]*x[i];
+        sxy += x[i]*y[i];
+    }
+    double nx = (double)n;
+    double denom = (nx * sxx - sx * sx);
+    if (fabs(denom) < 1e-15) {
+        *m = 0.0; *c = sy/nx; *R2 = 0.0; return;
+    }
+    *m = (nx * sxy - sx * sy) / denom;
+    *c = (sy - (*m) * sx) / nx;
+
+    // R^2 = 1 - SSE/SST
+    double ymean = sy / nx;
+    double SSE = 0.0, SST = 0.0;
+    for(int i=0;i<n;++i){
+        double yi_hat = (*m) * x[i] + (*c);
+        double err = y[i] - yi_hat;
+        SSE += err * err;
+        double dev = y[i] - ymean;
+        SST += dev * dev;
+    }
+    *R2 = (SST > 0.0) ? (1.0 - SSE / SST) : 0.0;
+}
+
+int main(int argc, char **argv){
+    Params P = {.b=3.0, .T=1000, .Nmin=100, .Nmax=1000, .Nstep=100, .seed=(unsigned)time(NULL)};
 
     // Parse CLI
-    for (int i=1; i<argc; ++i) {
-        if (!strcmp(argv[i], "-N") && i+1<argc) par.N = atoi(argv[++i]);
-        else if (!strcmp(argv[i], "-b") && i+1<argc) par.b = atof(argv[++i]);
-        else if (!strcmp(argv[i], "-T") && i+1<argc) par.T = atoi(argv[++i]);
-        else if (!strcmp(argv[i], "-bins") && i+1<argc) par.nb_bins = atoi(argv[++i]);
-        else if (!strcmp(argv[i], "-s") && i+1<argc) par.seed = (unsigned)strtoul(argv[++i], NULL, 10);
+    for(int i=1;i<argc;i++){
+        if (!strcmp(argv[i], "-b") && i+1<argc)       P.b = atof(argv[++i]);
+        else if (!strcmp(argv[i], "-T") && i+1<argc)  P.T = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "-Nmin") && i+1<argc) P.Nmin = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "-Nmax") && i+1<argc) P.Nmax = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "-Nstep") && i+1<argc) P.Nstep = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "-s") && i+1<argc)    P.seed = (unsigned)strtoul(argv[++i], NULL, 10);
         else { usage(argv[0]); return 1; }
     }
-    if (par.N <= 0 || par.T <= 0 || par.b <= 0.0 || par.nb_bins <= 0) {
+    if (P.T <= 0 || P.b <= 0.0 || P.Nmin <= 0 || P.Nmax < P.Nmin || P.Nstep <= 0){
         usage(argv[0]); return 1;
     }
 
-    srand(par.seed);
+    srand(P.seed);
 
-    // Fichiers de sortie
-    FILE *fxyz = fopen("polymere.xyz", "w");
-    if (!fxyz) { perror("polymere.xyz"); return 1; }
-
-    FILE *fqcsv = NULL; // on écrira l'histogramme après calcul
-
-    // Tableaux pour Q et Q^2
-    double *Q = (double*)malloc((size_t)par.T * sizeof(double));
-    if (!Q) { fprintf(stderr, "Allocation Q failed\n"); fclose(fxyz); return 1; }
-
-    // Accumulateurs pour QA_squared
-    double sum_Q2 = 0.0;
-
-    // Boucle sur les conformations
-    for (int t=0; t<par.T; ++t) {
-        // R1 = (0,0,0)
-        double Rx = 0.0, Ry = 0.0, Rz = 0.0;
-        // Ecrire en-tête XYZ pour la conformation t
-        fprintf(fxyz, "%d\n", par.N + 1);
-        fprintf(fxyz, "conformations %d\n", t+1);
-        // Monomère 1
-        fprintf(fxyz, "C %8.3f %8.3f %8.3f\n", Rx, Ry, Rz);
-
-        // Somme cumulative des vecteurs de liaison (comme sum_b dans MATLAB)
-        double sx = 0.0, sy = 0.0, sz = 0.0;
-
-        for (int i=2; i<=par.N+1; ++i) {
-            // theta ~ U[0, 2pi), phi = acos(2u-1) (uniforme sur la sphère)
-            double theta = 2.0 * M_PI * urand();
-            double u = urand();
-            double phi = acos(2.0*u - 1.0);
-
-            // Coordonnées cartésiennes du bond vector (norme b)
-            double x = par.b * (sin(phi) * cos(theta));
-            double y = par.b * (sin(phi) * sin(theta));
-            double z = par.b * cos(phi);
-
-            sx += x; sy += y; sz += z;
-
-            // R(i) = R(1) + sum_b  (R1 est (0,0,0))
-            Rx = sx; Ry = sy; Rz = sz;
-
-            // Ecrire le point
-            fprintf(fxyz, "C %8.3f %8.3f %8.3f\n", Rx, Ry, Rz);
-        }
-
-        // Q = || R(N+1) - R(1) || = || sum_b ||
-        double Qnorm = sqrt(sx*sx + sy*sy + sz*sz);
-        Q[t] = Qnorm;
-        sum_Q2 += Qnorm * Qnorm;
-    }
-
-    fclose(fxyz);
-
-    // Moyenne quadratique de Q
-    double QA_squared = sum_Q2 / (double)par.T;
-    printf("La valeur calculee de la moyenne quadratique de Q est : %.6f\n", QA_squared);
-
-    // Valeur theorique
-    double QA_theorique = (double)par.N * par.b * par.b;
-    printf("La valeur theorique de la moyenne quadratique de Q est : %.6f\n", QA_theorique);
-
-    // Histogramme de Q comme histcounts(Q, edges) avec edges = linspace(min, max, nb_bins+1)
-    // 1) min & max
-    double qmin = Q[0], qmax = Q[0];
-    for (int t=1; t<par.T; ++t) {
-        if (Q[t] < qmin) qmin = Q[t];
-        if (Q[t] > qmax) qmax = Q[t];
-    }
-    // éviter binWidth=0 si toutes les valeurs sont identiques (cas pathologique)
-    if (qmax == qmin) qmax = qmin + 1e-12;
-
-    int *counts = (int*)calloc((size_t)par.nb_bins, sizeof(int));
-    if (!counts) { fprintf(stderr, "Allocation counts failed\n"); free(Q); return 1; }
-
-    double binWidth = (qmax - qmin) / (double)par.nb_bins;
-
-    for (int t=0; t<par.T; ++t) {
-        int idx = (int)floor((Q[t] - qmin) / binWidth);
-        if (idx < 0) idx = 0;
-        if (idx >= par.nb_bins) idx = par.nb_bins - 1; // inclure la valeur max dans le dernier bin
-        counts[idx]++;
-    }
-
-    // Probabilités P(Q) = counts / T, et bords (edges)
-    fqcsv = fopen("hist_Q.csv", "w");
-    if (!fqcsv) {
-        perror("hist_Q.csv");
-        free(counts); free(Q);
+    // Determine number of N points
+    int K = (P.Nmax - P.Nmin) / P.Nstep + 1;
+    double *Nvals = (double*)malloc((size_t)K * sizeof(double));
+    double *QA2   = (double*)malloc((size_t)K * sizeof(double));
+    double *QA2th = (double*)malloc((size_t)K * sizeof(double));
+    if(!Nvals || !QA2 || !QA2th){
+        fprintf(stderr, "Allocation failed.\n");
+        free(Nvals); free(QA2); free(QA2th);
         return 1;
     }
-    // En-tete
-    fprintf(fqcsv, "edge_left,edge_right,count,probability\n");
-    for (int k=0; k<par.nb_bins; ++k) {
-        double left  = qmin + k * binWidth;
-        double right = left + binWidth;
-        double prob  = (double)counts[k] / (double)par.T;
-        fprintf(fqcsv, "%.10f,%.10f,%d,%.10f\n", left, right, counts[k], prob);
+
+    // Sweep over N = Nmin:Nstep:Nmax
+    for(int k=0;k<K;++k){
+        int N = P.Nmin + k * P.Nstep;
+        Nvals[k] = (double)N;
+
+        // Accumulate mean of Q^2 over T conformations
+        double sum_Q2 = 0.0;
+
+        for(int t=0; t<P.T; ++t){
+            // sum of bond vectors for this conformation
+            double sx=0.0, sy=0.0, sz=0.0;
+
+            for(int i=0; i<N; ++i){
+                // theta uniform in [0, 2pi), phi = acos(2u-1)
+                double theta = 2.0 * M_PI * urand01();
+                double u = urand01();
+                double phi = acos(2.0 * u - 1.0);
+
+                // bond vector components of length b
+                double x = P.b * (sin(phi) * cos(theta));
+                double y = P.b * (sin(phi) * sin(theta));
+                double z = P.b * cos(phi);
+
+                sx += x; sy += y; sz += z;
+            }
+
+            double Qnorm2 = sx*sx + sy*sy + sz*sz;
+            sum_Q2 += Qnorm2;
+        }
+
+        QA2[k]   = sum_Q2 / (double)P.T;       // mean(Q.^2)
+        QA2th[k] = (double)N * P.b * P.b;      // theory: N*b^2
     }
-    fclose(fqcsv);
 
-    printf("Fichiers ecrits : polymere.xyz (conformations), hist_Q.csv (histogramme de Q)\n");
+    // Linear regression QA2 vs N
+    double slope=0.0, intercept=0.0, R2=0.0;
+    linreg(Nvals, QA2, K, &slope, &intercept, &R2);
+    double b_est = (slope > 0.0) ? sqrt(slope) : 0.0;
 
-    free(counts);
-    free(Q);
+    // Print summary
+    printf("=== FJC sweep results ===\n");
+    printf("b (input) = %.6f, T = %d, N in [%d:%d:%d]\n", P.b, P.T, P.Nmin, P.Nstep, P.Nmax);
+    printf("Linear fit QA_squared ~ slope*N + intercept\n");
+    printf("slope = %.6f, intercept = %.6f, R^2 = %.6f\n", slope, intercept, R2);
+    printf("Estimated segment length b = sqrt(slope) = %.6f\n", b_est);
+
+    // Write CSV for plotting
+    FILE *f = fopen("qa_vs_N.csv", "w");
+    if(!f){
+        perror("qa_vs_N.csv");
+    } else {
+        fprintf(f, "N,QA_squared,QA_theory\n");
+        for(int k=0;k<K;++k){
+            fprintf(f, "%.0f,%.10f,%.10f\n", Nvals[k], QA2[k], QA2th[k]);
+        }
+        fclose(f);
+        printf("CSV written: qa_vs_N.csv (columns: N, QA_squared, QA_theory)\n");
+    }
+
+    free(Nvals); free(QA2); free(QA2th);
     return 0;
 }
